@@ -1,0 +1,30 @@
+[package]
+name = "color-ls"
+version = "0.1.0"
+edition = "2021"
+authors = ["lessw1.com>"]
+description = "A simple ls implementation in Rust with color support"
+license = "MIT"
+repository = "https://github.com/lessw2020/color-ls"
+readme = "README.md"
+keywords = ["cli", "filesystem", "ls", "directory"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "ls"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+colored = "2.1"
+structopt = "0.3"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
