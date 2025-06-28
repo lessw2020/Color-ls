@@ -23,6 +23,17 @@ impl fmt::Display for LsError {
         }
 }
 
+fn count_directory_entries(path: &Path) -> Option<usize> {
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            // Count all entries (including hidden files for accuracy)
+            let count = entries.count();
+            Some(count)
+        },
+        Err(_) => None, // Permission denied or other error
+    }
+}
+
 fn should_use_color(color_mode: &ColorMode) -> bool {
     match color_mode {
         ColorMode::Never => false,
