@@ -52,11 +52,11 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
 
     // Check file type first
     if file.is_dir {
-        return Some(Color::Blue);
+        return Some(Color::BrightCyan);
     }
 
     if file.is_symlink {
-        return Some(Color::Cyan);
+        return Some(Color::Red);
     }
 
     // Check if executable
@@ -86,7 +86,7 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
             "aac" | "au" | "flac" | "m4a" | "mid" | "midi" | "mka" | "mp3" | "mpc" |
             "ogg" | "ra" | "wav" | "oga" | "opus" | "spx" | "xspf" => Some(Color::Cyan),
 
-            _ => None,
+            _ => Some(Color::BrightBlue),
         }
     } else {
         None
@@ -98,7 +98,7 @@ fn format_filename_with_indicators(file: &FileInfo, use_color: bool, show_counts
 
     if file.is_dir && show_counts {
         match file.dir_count {
-            Some(count) => format!("{}[{}]", colored_name, count),
+            Some(count) => format!("{colored_name}({count})" ),
             None => format!("{}[?]", colored_name), // Permission denied or error
         }
     } else if file.is_dir {
