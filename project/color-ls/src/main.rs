@@ -1,14 +1,14 @@
 use chrono::{DateTime, Local};
-use colored::{Color,Colorize};
-
+use colored::{Color, Colorize};
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path,PathBuf};
+use std::path::{Path, PathBuf};
 use std::process;
 use structopt::StructOpt;
 
+// Custom error type for better error handling
 #[derive(Debug)]
 enum LsError {
     IoError(std::io::Error),
@@ -19,11 +19,21 @@ impl fmt::Display for LsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             LsError::IoError(e) => write!(f, "IO error: {}", e),
-            LsError::InvalidFileName(s) => write!(f, "Invalid file name: {}", s),
+            LsError::InvalidFileName(name) => write!(f, "Invalid filename: {}", name),
         }
-    }
+}
 }
 
+fn count_directory_entries(path: &Path) -> Option<usize> {
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            // Count all entries (including hidden files for accuracy)
+            let count = entries.count();
+            Some(count)
+        },
+        Err(_) => None, // Permission denied or other error
+    }
+}
 
 fn should_use_color(color_mode: &ColorMode) -> bool {
     match color_mode {
@@ -37,20 +47,19 @@ fn should_use_color(color_mode: &ColorMode) -> bool {
     }
 }
 
-
 fn get_file_color(file: &FileInfo) -> Option<Color> {
     let mode = file.metadata.permissions().mode();
 
-    // check file type first
+    // Check file type first
     if file.is_dir {
-        return Some(Color::Blue);   // blue for directories
+        return Some(Color::Blue);
     }
 
     if file.is_symlink {
-        return Some(Color::Cyan);   // cyan for symlinks
+        return Some(Color::Cyan);
     }
 
-    // check if executable
+    // Check if executable
     if mode & (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) != 0 {
         return Some(Color::Green);
     }
@@ -84,6 +93,22 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
     }
 }
 
+fn format_filename_with_indicators(file: &FileInfo, use_color: bool, show_counts: bool) -> String {
+    let colored_name = colorize_filename(file, use_color);
+
+    if file.is_dir && show_counts {
+        match file.dir_count {
+            Some(count) => format!("{}[{}]", colored_name, count),
+            None => format!("{}[?]", colored_name), // Permission denied or error
+        }
+    } else if file.is_dir {
+        // Only show "/" when counts are disabled
+        format!("{}/", colored_name)
+    } else {
+        colored_name
+    }
+}
+
 fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
     if !use_color {
         return file.name.clone();
@@ -96,6 +121,8 @@ fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
 }
 
 
+
+
 impl Error for LsError {}
 
 impl From<std::io::Error> for LsError {
@@ -104,14 +131,12 @@ impl From<std::io::Error> for LsError {
     }
 }
 
-
 #[derive(Debug, Clone)]
 enum ColorMode {
     Never,
     Always,
     Auto,
 }
-
 
 impl std::str::FromStr for ColorMode {
     type Err = String;
@@ -126,9 +151,8 @@ impl std::str::FromStr for ColorMode {
     }
 }
 
-
 #[derive(StructOpt, Debug)]
-#[structopt(name = "ls", about = "A simple ls implementation in Rust")]
+#[structopt(name = "ls", about = "A simple ls implementation in Rust with directory counts by default")]
 struct Opt {
     /// Show hidden files (starting with .)
     #[structopt(short = "a", long = "all")]
@@ -154,6 +178,10 @@ struct Opt {
     #[structopt(long = "color", default_value = "auto")]
     color: ColorMode,
 
+    /// Disable directory entry counts (counts are shown by default)
+    #[structopt(long = "no-dir-counts", short = "C")]
+    no_dir_counts: bool,
+
     /// Paths to list
     #[structopt(parse(from_os_str))]
     paths: Vec<PathBuf>,
@@ -166,11 +194,11 @@ struct FileInfo {
     metadata: fs::Metadata,
     is_dir: bool,
     is_symlink: bool,
+    dir_count: Option<usize>, // Number of entries in directory (None if not a dir or unreadable)
 }
 
-
 impl FileInfo {
-    fn new(entry: fs::DirEntry) -> Result<Self, LsError> {
+    fn new(entry: fs::DirEntry, count_dirs: bool) -> Result<Self, LsError> {
         let metadata = entry.metadata()?;
         let path = entry.path();
         let name = entry
@@ -178,16 +206,25 @@ impl FileInfo {
             .into_string()
             .map_err(|_| LsError::InvalidFileName(format!("{:?}", entry.file_name())))?;
 
+        let is_dir = path.is_dir();
+        let is_symlink = path.is_symlink();
+        let dir_count = if is_dir && count_dirs {
+            count_directory_entries(&path)
+        } else {
+            None
+        };
+
         Ok(FileInfo {
             name,
             path: path.clone(),
             metadata,
-            is_dir: path.is_dir(),
-            is_symlink: path.is_symlink(),
+            is_dir,
+            is_symlink,
+            dir_count,
         })
     }
 
-    fn from_path(path: &Path) -> Result<Self, LsError> {
+    fn from_path(path: &Path, count_dirs: bool) -> Result<Self, LsError> {
         let metadata = path.metadata()?;
         let name = path
             .file_name()
@@ -195,16 +232,24 @@ impl FileInfo {
             .unwrap_or("")
             .to_string();
 
+        let is_dir = path.is_dir();
+        let is_symlink = path.is_symlink();
+        let dir_count = if is_dir && count_dirs {
+            count_directory_entries(path)
+        } else {
+            None
+        };
+
         Ok(FileInfo {
             name,
             path: path.to_path_buf(),
             metadata,
-            is_dir: path.is_dir(),
-            is_symlink: path.is_symlink(),
+            is_dir,
+            is_symlink,
+            dir_count,
         })
     }
 }
-
 
 fn format_permissions(mode: u32) -> String {
     let file_type = match mode & libc::S_IFMT {
@@ -252,7 +297,7 @@ fn format_size(size: u64, human_readable: bool) -> String {
     }
 }
 
-fn print_long_format(file: &FileInfo, human_readable: bool, use_color: bool) -> Result<(), LsError> {
+fn print_long_format(file: &FileInfo, human_readable: bool, use_color: bool, show_counts: bool) -> Result<(), LsError> {
     let mode = file.metadata.permissions().mode();
     let nlink = file.metadata.nlink();
     let size = file.metadata.len();
@@ -260,28 +305,23 @@ fn print_long_format(file: &FileInfo, human_readable: bool, use_color: bool) -> 
 
     let formatted_size = format_size(size, human_readable);
     let time_str = modified.format("%b %d %H:%M").to_string();
-    let colored_name = colorize_filename(file, use_color);
+    let formatted_name = format_filename_with_indicators(file, use_color, show_counts);
 
     println!(
-        "{} {:>3} {:>8} {} {}{}",
+        "{} {:>3} {:>8} {} {}",
         format_permissions(mode),
         nlink,
         formatted_size,
         time_str,
-        colored_name,
-        if file.is_dir { "/" } else { "" }
+        formatted_name
     );
 
     Ok(())
 }
 
-fn print_short_format(file: &FileInfo, use_color: bool) {
-    let colored_name = colorize_filename(file, use_color);
-    print!(
-        "{}{}  ",
-        colored_name,
-        if file.is_dir { "/" } else { "" }
-    );
+fn print_short_format(file: &FileInfo, use_color: bool, show_counts: bool) {
+    let formatted_name = format_filename_with_indicators(file, use_color, show_counts);
+    print!("{}  ", formatted_name);
 }
 
 fn should_show_file(name: &str, show_all: bool) -> bool {
@@ -291,11 +331,12 @@ fn should_show_file(name: &str, show_all: bool) -> bool {
 fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
     let mut entries = Vec::new();
     let use_color = should_use_color(&opt.color);
+    let show_counts = !opt.no_dir_counts;
 
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            let file_info = FileInfo::new(entry)?;
+            let file_info = FileInfo::new(entry, show_counts)?;
 
             if should_show_file(&file_info.name, opt.all) {
                 entries.push(file_info);
@@ -303,7 +344,7 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
         }
     } else {
         // Single file
-        let file_info = FileInfo::from_path(path)?;
+        let file_info = FileInfo::from_path(path, show_counts)?;
         entries.push(file_info);
     }
 
@@ -321,11 +362,11 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
     // Print entries
     if opt.long {
         for file in &entries {
-            print_long_format(file, opt.human_readable, use_color)?;
+            print_long_format(file, opt.human_readable, use_color, show_counts)?;
         }
     } else {
         for file in &entries {
-            print_short_format(file, use_color);
+            print_short_format(file, use_color, show_counts);
         }
         if !entries.is_empty() {
             println!(); // New line after short format
@@ -334,8 +375,6 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
 
     Ok(())
 }
-
-
 
 fn run(opt: &Opt) -> Result<(), LsError> {
     let paths = if opt.paths.is_empty() {
@@ -358,16 +397,14 @@ fn run(opt: &Opt) -> Result<(), LsError> {
         }
     }
 
-
     Ok(())
 }
-
 
 fn main() {
     let opt = Opt::from_args();
 
     if let Err(e) = run(&opt) {
-        eprintln!("color-ls: {}", e);
+        eprintln!("ls: {}", e);
         process::exit(1);
     }
 }

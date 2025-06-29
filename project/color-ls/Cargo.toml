@@ -18,7 +18,7 @@ libc = "0.2"
 tempfile = "3.8"
 
 [[bin]]
-name = "ls"
+name = "lsr"
 path = "src/main.rs"
 
 [profile.release]
