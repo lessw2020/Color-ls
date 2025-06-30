@@ -61,7 +61,7 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
 
     // Check if executable
     if mode & (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) != 0 {
-        return Some(Color::Green);
+        return Some(Color::BrightGreen);
     }
 
     // Check by file extension
@@ -86,13 +86,122 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
             "aac" | "au" | "flac" | "m4a" | "mid" | "midi" | "mka" | "mp3" | "mpc" |
             "ogg" | "ra" | "wav" | "oga" | "opus" | "spx" | "xspf" => Some(Color::Cyan),
 
-            _ => Some(Color::BrightBlue),
+            _ => Some(Color::BrightYellow),
         }
     } else {
         None
     }
 }
 
+fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
+    let mut entries = Vec::new();
+    let use_color = should_use_color(&opt.color);
+    let show_counts = !opt.no_dir_counts;
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let file_info = FileInfo::new(entry, show_counts)?;
+
+            if should_show_file(&file_info.name, opt.all) {
+                entries.push(file_info);
+            }
+        }
+    } else {
+        // Single file
+        let file_info = FileInfo::from_path(path, show_counts)?;
+        entries.push(file_info);
+    }
+
+    // Separate directories and files
+    let mut directories: Vec<FileInfo> = Vec::new();
+    let mut files: Vec<FileInfo> = Vec::new();
+
+    for entry in entries {
+        if entry.is_dir {
+            directories.push(entry);
+        } else {
+            files.push(entry);
+        }
+    }
+
+    // Sort both groups separately
+    let sort_func = |entries: &mut Vec<FileInfo>| {
+        if opt.sort_time {
+            entries.sort_by_key(|f| f.metadata.modified().unwrap_or(std::time::UNIX_EPOCH));
+        } else {
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+
+        if opt.reverse {
+            entries.reverse();
+        }
+    };
+
+    sort_func(&mut directories);
+    sort_func(&mut files);
+
+    // Print entries with grouping
+    if opt.long {
+        // Print directories first
+        for file in &directories {
+            print_long_format(file, opt.human_readable, use_color, show_counts)?;
+        }
+
+        // Add line break between directories and files if both exist
+        if !directories.is_empty() && !files.is_empty() {
+            println!();
+        }
+
+        // Print files
+        for file in &files {
+            print_long_format(file, opt.human_readable, use_color, show_counts)?;
+        }
+    } else {
+        // Short format with grouping
+        let has_dirs = !directories.is_empty();
+        let has_files = !files.is_empty();
+
+        // Print spacer line
+        println!();
+
+        // Print directories first
+        if has_dirs {
+            for file in &directories {
+                print_short_format(file, use_color, show_counts);
+            }
+            println!(); // End the directory line
+        }
+
+        // Add separation line if we have both directories and files
+        //if has_dirs && has_files {
+        //    println!(); // Empty line between groups
+        //}
+
+        // Print files
+        if has_files {
+            for file in &files {
+                print_short_format(file, use_color, show_counts);
+            }
+            println!(); // End the files line
+        }
+        println!(); // Final spacer line
+    }
+
+    Ok(())
+}
+
+
+fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
+    if !use_color {
+        return file.name.clone();
+    }
+
+    match get_file_color(file) {
+        Some(color) => file.name.color(color).to_string(),
+        None => file.name.clone(),
+    }
+}
 fn format_filename_with_indicators(file: &FileInfo, use_color: bool, show_counts: bool) -> String {
     let colored_name = colorize_filename(file, use_color);
 
@@ -108,19 +217,6 @@ fn format_filename_with_indicators(file: &FileInfo, use_color: bool, show_counts
         colored_name
     }
 }
-
-fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
-    if !use_color {
-        return file.name.clone();
-    }
-
-    match get_file_color(file) {
-        Some(color) => file.name.color(color).to_string(),
-        None => file.name.clone(),
-    }
-}
-
-
 
 
 impl Error for LsError {}
@@ -328,53 +424,6 @@ fn should_show_file(name: &str, show_all: bool) -> bool {
     show_all || !name.starts_with('.')
 }
 
-fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
-    let mut entries = Vec::new();
-    let use_color = should_use_color(&opt.color);
-    let show_counts = !opt.no_dir_counts;
-
-    if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let file_info = FileInfo::new(entry, show_counts)?;
-
-            if should_show_file(&file_info.name, opt.all) {
-                entries.push(file_info);
-            }
-        }
-    } else {
-        // Single file
-        let file_info = FileInfo::from_path(path, show_counts)?;
-        entries.push(file_info);
-    }
-
-    // Sort entries
-    if opt.sort_time {
-        entries.sort_by_key(|f| f.metadata.modified().unwrap_or(std::time::UNIX_EPOCH));
-    } else {
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-
-    if opt.reverse {
-        entries.reverse();
-    }
-
-    // Print entries
-    if opt.long {
-        for file in &entries {
-            print_long_format(file, opt.human_readable, use_color, show_counts)?;
-        }
-    } else {
-        for file in &entries {
-            print_short_format(file, use_color, show_counts);
-        }
-        if !entries.is_empty() {
-            println!(); // New line after short format
-        }
-    }
-
-    Ok(())
-}
 
 fn run(opt: &Opt) -> Result<(), LsError> {
     let paths = if opt.paths.is_empty() {
