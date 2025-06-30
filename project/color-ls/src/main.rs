@@ -92,7 +92,6 @@ fn get_file_color(file: &FileInfo) -> Option<Color> {
         None
     }
 }
-
 fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
     let mut entries = Vec::new();
     let use_color = should_use_color(&opt.color);
@@ -130,7 +129,7 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
         if opt.sort_time {
             entries.sort_by_key(|f| f.metadata.modified().unwrap_or(std::time::UNIX_EPOCH));
         } else {
-            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         }
 
         if opt.reverse {
@@ -162,9 +161,6 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
         let has_dirs = !directories.is_empty();
         let has_files = !files.is_empty();
 
-        // Print spacer line
-        println!();
-
         // Print directories first
         if has_dirs {
             for file in &directories {
@@ -174,9 +170,9 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
         }
 
         // Add separation line if we have both directories and files
-        //if has_dirs && has_files {
-        //    println!(); // Empty line between groups
-        //}
+        if has_dirs && has_files {
+            println!(); // Empty line between groups
+        }
 
         // Print files
         if has_files {
@@ -185,11 +181,11 @@ fn list_directory(path: &Path, opt: &Opt) -> Result<(), LsError> {
             }
             println!(); // End the files line
         }
-        println!(); // Final spacer line
     }
 
     Ok(())
 }
+
 
 
 fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
@@ -202,17 +198,56 @@ fn colorize_filename(file: &FileInfo, use_color: bool) -> String {
         None => file.name.clone(),
     }
 }
+
 fn format_filename_with_indicators(file: &FileInfo, use_color: bool, show_counts: bool) -> String {
     let colored_name = colorize_filename(file, use_color);
 
     if file.is_dir && show_counts {
         match file.dir_count {
-            Some(count) => format!("{colored_name}({count})" ),
-            None => format!("{}[?]", colored_name), // Permission denied or error
+            Some(count) => {
+                if use_color {
+                    if let Some(color) = get_file_color(file) {
+                        format!("{}{}{}{}",
+                            colored_name,
+                            "(".color(Color::BrightBlack),
+                            count.to_string().color(Color::BrightBlack),
+                            ")".color(Color::BrightBlack)
+                        )
+                    } else {
+                        format!("{colored_name}({count})")
+                    }
+                } else {
+                    format!("{colored_name}({count})")
+                }
+            },
+            None => {
+                if use_color {
+                    if let Some(color) = get_file_color(file) {
+                        format!("{}{}{}{}",
+                            colored_name,
+                            "[".color(color),
+                            "?".color(Color::BrightBlack),
+                            "]".color(color)
+                        )
+                    } else {
+                        format!("{}[?]", colored_name)
+                    }
+                } else {
+                    format!("{}[?]", colored_name)
+                }
+            }
         }
     } else if file.is_dir {
         // Only show "/" when counts are disabled
-        format!("{}/", colored_name)
+        if use_color {
+            if let Some(color) = get_file_color(file) {
+                format!("{}{}", colored_name, "/".color(color))
+            } else {
+                format!("{}/", colored_name)
+            }
+        } else {
+            format!("{}/", colored_name)
+        }
     } else {
         colored_name
     }
